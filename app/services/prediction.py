@@ -18,6 +18,7 @@ from fastapi import WebSocket
 from ..models.schemas import PredictionResponse, MarketSignal
 from ..core.config import settings
 from ..core.logging import setup_logging
+from .data_ingestion import DataIngestionService
 
 logger = setup_logging()
 
@@ -30,14 +31,13 @@ class LSTMPredictor(nn.Module):
         input_size: int = 7,
         hidden_size: int = 50,
         num_layers: int = 2,
-        output_size: int = 1
+        output_size: int = 1,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
-        self.lstm = nn.LSTM(input_size, hidden_size,
-                            num_layers, batch_first=True)
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
         self.dropout = nn.Dropout(0.2)
 
@@ -56,8 +56,7 @@ class PredictionService:
     """Service for AI-based market prediction and signal generation"""
 
     def __init__(self) -> None:
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lstm_model: Optional[LSTMPredictor] = None
         self.rf_classifier: Optional[RandomForestClassifier] = None
         self.price_scaler = StandardScaler()
@@ -123,12 +122,11 @@ class PredictionService:
             if self.lstm_model is not None:
                 torch.save(
                     self.lstm_model.state_dict(),
-                    f"{settings.model_path}/lstm_model.pth"
+                    f"{settings.model_path}/lstm_model.pth",
                 )
 
             # Save Random Forest
-            dump(self.rf_classifier,
-                 f"{settings.model_path}/rf_classifier.joblib")
+            dump(self.rf_classifier, f"{settings.model_path}/rf_classifier.joblib")
 
             # Save scalers
             scalers = {
@@ -151,10 +149,6 @@ class PredictionService:
         """Generate price prediction for a symbol"""
         try:
             # Get historical data for prediction
-            # Import here to avoid circular imports
-            from .data_ingestion import (
-                DataIngestionService,
-            )  # pylint: disable=import-outside-toplevel
 
             data_service = DataIngestionService()
             historical_data = await data_service.get_historical_data(symbol, 100)
@@ -251,14 +245,14 @@ class PredictionService:
         """Make prediction using LSTM model"""
         try:
             # Scale features
-            features_scaled = self.feature_scaler.fit_transform(
-                features_df.values)
+            features_scaled = self.feature_scaler.fit_transform(features_df.values)
 
             # Prepare sequence data
             sequence_length = min(20, len(features_scaled))
 
             feature_matrix = features_scaled[-sequence_length:].reshape(
-                1, sequence_length, -1)
+                1, sequence_length, -1
+            )
             feature_tensor = torch.FloatTensor(feature_matrix).to(self.device)
 
             # Make prediction
@@ -279,13 +273,12 @@ class PredictionService:
 
         except (RuntimeError, ValueError, IndexError) as e:
             logger.error(f"Error in LSTM prediction: {e}")
-            # Fallback to simple prediction
-            # Small positive change
+            # Fallback to simple prediction - small positive change
             return features_df["price"].iloc[-1] * 1.001
 
     async def _calculate_confidence(
-        self, features_df: pd.DataFrame, _prediction: float  # pylint: disable=unused-argument
-    ) -> float:
+        self, features_df: pd.DataFrame, _prediction: float
+    ) -> float:  # pylint: disable=unused-argument
         """Calculate prediction confidence"""
         try:
             # Use volatility and recent price stability as confidence
@@ -320,10 +313,6 @@ class PredictionService:
             prediction_response = await self.predict(symbol)
 
             # Get historical data for signal generation
-            # Import here to avoid circular imports
-            from .data_ingestion import (
-                DataIngestionService,
-            )  # pylint: disable=import-outside-toplevel
 
             data_service = DataIngestionService()
             historical_data = await data_service.get_historical_data(symbol, 50)
@@ -398,12 +387,10 @@ class PredictionService:
             rsi_strength = max(abs(rsi - 50) / 50, 0.1)
 
             # Volatility factor (lower volatility = stronger signal)
-            vol_strength = max(
-                1 - (volatility / features_df["volatility"].mean()), 0.1)
+            vol_strength = max(1 - (volatility / features_df["volatility"].mean()), 0.1)
 
             # Combine with prediction confidence
-            strength = (rsi_strength * 0.3) + \
-                (vol_strength * 0.3) + (confidence * 0.4)
+            strength = (rsi_strength * 0.3) + (vol_strength * 0.3) + (confidence * 0.4)
 
             return min(max(strength, 0.1), 1.0)
 
@@ -431,15 +418,17 @@ class PredictionService:
         except (RuntimeError, ValueError, ConnectionError) as e:
             logger.error(f"Error streaming signals: {e}")
 
-    async def train_models(
-        self, training_data: pd.DataFrame
-    ) -> None:  # pylint: disable=unused-argument
+    async def train_models(self, training_data: Optional[pd.DataFrame] = None) -> None:
         """Train models with new data (placeholder for future implementation)"""
         try:
             logger.info("Model training initiated")
 
             # This would implement the actual training logic
             # For now, we'll just log that training was requested
+            if training_data is not None:
+                logger.info(f"Training data shape: {training_data.shape}")
+            else:
+                logger.info("No training data provided, using default initialization")
 
             # Save models after training
             self._save_models()
