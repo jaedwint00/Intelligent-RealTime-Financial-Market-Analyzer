@@ -7,12 +7,12 @@ import os
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 
-import pandas as pd
-import torch
-from torch import nn
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from joblib import dump, load
+import pandas as pd  # type: ignore
+import torch  # type: ignore
+from torch import nn  # type: ignore
+from sklearn.preprocessing import MinMaxScaler, StandardScaler  # type: ignore
+from sklearn.ensemble import RandomForestClassifier  # type: ignore
+from joblib import dump, load  # type: ignore
 from fastapi import WebSocket
 
 from ..models.schemas import PredictionResponse, MarketSignal
@@ -25,16 +25,23 @@ logger = setup_logging()
 class LSTMPredictor(nn.Module):
     """LSTM model for price prediction"""
 
-    def __init__(self, input_size=7, hidden_size=50, num_layers=2, output_size=1):
+    def __init__(
+        self,
+        input_size: int = 7,
+        hidden_size: int = 50,
+        num_layers: int = 2,
+        output_size: int = 1
+    ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.lstm = nn.LSTM(input_size, hidden_size,
+                            num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
         self.dropout = nn.Dropout(0.2)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the LSTM network"""
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
@@ -48,16 +55,17 @@ class LSTMPredictor(nn.Module):
 class PredictionService:
     """Service for AI-based market prediction and signal generation"""
 
-    def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.lstm_model = None
-        self.rf_classifier = None
+    def __init__(self) -> None:
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.lstm_model: Optional[LSTMPredictor] = None
+        self.rf_classifier: Optional[RandomForestClassifier] = None
         self.price_scaler = StandardScaler()
         self.feature_scaler = MinMaxScaler()
         self.active_connections: List[WebSocket] = []
         self._initialize_models()
 
-    def _initialize_models(self):
+    def _initialize_models(self) -> None:
         """Initialize ML models"""
         try:
             # Initialize LSTM model
@@ -76,7 +84,7 @@ class PredictionService:
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error initializing models: {e}")
 
-    def _load_models(self):
+    def _load_models(self) -> None:
         """Load pre-trained models if available"""
         try:
             lstm_path = f"{settings.model_path}/lstm_model.pth"
@@ -84,12 +92,13 @@ class PredictionService:
             scaler_path = f"{settings.model_path}/scalers.joblib"
 
             # Load LSTM model
-            if torch.cuda.is_available():
-                self.lstm_model.load_state_dict(torch.load(lstm_path))
-            else:
-                self.lstm_model.load_state_dict(
-                    torch.load(lstm_path, map_location="cpu")
-                )
+            if self.lstm_model is not None:
+                if torch.cuda.is_available():
+                    self.lstm_model.load_state_dict(torch.load(lstm_path))
+                else:
+                    self.lstm_model.load_state_dict(
+                        torch.load(lstm_path, map_location="cpu")
+                    )
 
             # Load Random Forest
             self.rf_classifier = load(rf_path)
@@ -105,18 +114,21 @@ class PredictionService:
             logger.warning(f"Could not load pre-trained models: {e}")
             logger.info("Using freshly initialized models")
 
-    def _save_models(self):
+    def _save_models(self) -> None:
         """Save trained models"""
         try:
             os.makedirs(settings.model_path, exist_ok=True)
 
             # Save LSTM model
-            torch.save(
-                self.lstm_model.state_dict(), f"{settings.model_path}/lstm_model.pth"
-            )
+            if self.lstm_model is not None:
+                torch.save(
+                    self.lstm_model.state_dict(),
+                    f"{settings.model_path}/lstm_model.pth"
+                )
 
             # Save Random Forest
-            dump(self.rf_classifier, f"{settings.model_path}/rf_classifier.joblib")
+            dump(self.rf_classifier,
+                 f"{settings.model_path}/rf_classifier.joblib")
 
             # Save scalers
             scalers = {
@@ -133,8 +145,8 @@ class PredictionService:
     async def predict(
         self,
         symbol: str,
-        timeframe: str = "1h",
-        features: Optional[Dict[str, Any]] = None,
+        timeframe: str = "1h",  # pylint: disable=unused-argument
+        features: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
     ) -> PredictionResponse:
         """Generate price prediction for a symbol"""
         try:
@@ -239,19 +251,24 @@ class PredictionService:
         """Make prediction using LSTM model"""
         try:
             # Scale features
-            features_scaled = self.feature_scaler.fit_transform(features_df.values)
+            features_scaled = self.feature_scaler.fit_transform(
+                features_df.values)
 
             # Prepare sequence data
             sequence_length = min(20, len(features_scaled))
 
-            X = features_scaled[-sequence_length:].reshape(1, sequence_length, -1)
-            X_tensor = torch.FloatTensor(X).to(self.device)
+            feature_matrix = features_scaled[-sequence_length:].reshape(
+                1, sequence_length, -1)
+            feature_tensor = torch.FloatTensor(feature_matrix).to(self.device)
 
             # Make prediction
-            self.lstm_model.eval()
-            with torch.no_grad():
-                prediction = self.lstm_model(X_tensor)
-                prediction = prediction.cpu().numpy()[0][0]
+            if self.lstm_model is not None:
+                self.lstm_model.eval()
+                with torch.no_grad():
+                    prediction = self.lstm_model(feature_tensor)
+                    prediction = prediction.cpu().numpy()[0][0]
+            else:
+                raise ValueError("LSTM model not initialized")
 
             # Scale back to original price range
             last_price = features_df["price"].iloc[-1]
@@ -263,10 +280,11 @@ class PredictionService:
         except (RuntimeError, ValueError, IndexError) as e:
             logger.error(f"Error in LSTM prediction: {e}")
             # Fallback to simple prediction
-            return features_df["price"].iloc[-1] * 1.001  # Small positive change
+            # Small positive change
+            return features_df["price"].iloc[-1] * 1.001
 
     async def _calculate_confidence(
-        self, features_df: pd.DataFrame, _prediction: float
+        self, features_df: pd.DataFrame, _prediction: float  # pylint: disable=unused-argument
     ) -> float:
         """Calculate prediction confidence"""
         try:
@@ -293,7 +311,9 @@ class PredictionService:
             logger.error(f"Error calculating confidence: {e}")
             return 0.5  # Default confidence
 
-    async def get_signals(self, symbol: str, _limit: int = 10) -> List[MarketSignal]:
+    async def get_signals(
+        self, symbol: str, _limit: int = 10
+    ) -> List[MarketSignal]:  # pylint: disable=unused-argument
         """Generate market signals for a symbol"""
         try:
             # Get prediction
@@ -378,10 +398,12 @@ class PredictionService:
             rsi_strength = max(abs(rsi - 50) / 50, 0.1)
 
             # Volatility factor (lower volatility = stronger signal)
-            vol_strength = max(1 - (volatility / features_df["volatility"].mean()), 0.1)
+            vol_strength = max(
+                1 - (volatility / features_df["volatility"].mean()), 0.1)
 
             # Combine with prediction confidence
-            strength = (rsi_strength * 0.3) + (vol_strength * 0.3) + (confidence * 0.4)
+            strength = (rsi_strength * 0.3) + \
+                (vol_strength * 0.3) + (confidence * 0.4)
 
             return min(max(strength, 0.1), 1.0)
 
@@ -389,7 +411,7 @@ class PredictionService:
             logger.error(f"Error calculating signal strength: {e}")
             return 0.5
 
-    async def stream_signals(self, websocket: WebSocket):
+    async def stream_signals(self, websocket: WebSocket) -> None:
         """Stream real-time signals to WebSocket client"""
         try:
             symbols = ["AAPL", "GOOGL", "MSFT", "BTC-USD"]  # Example symbols
@@ -409,7 +431,9 @@ class PredictionService:
         except (RuntimeError, ValueError, ConnectionError) as e:
             logger.error(f"Error streaming signals: {e}")
 
-    async def train_models(self, training_data: pd.DataFrame):
+    async def train_models(
+        self, training_data: pd.DataFrame
+    ) -> None:  # pylint: disable=unused-argument
         """Train models with new data (placeholder for future implementation)"""
         try:
             logger.info("Model training initiated")

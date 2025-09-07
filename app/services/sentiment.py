@@ -5,13 +5,12 @@ Sentiment analysis service using Hugging Face Transformers
 import asyncio
 from typing import Dict, Optional, List, Any
 
-# type: ignore
-from transformers import (
+from transformers import (  # type: ignore
     pipeline,
     AutoTokenizer,
     AutoModelForSequenceClassification,
 )
-import torch
+import torch  # type: ignore
 from joblib import Parallel, delayed  # type: ignore
 
 from ..models.schemas import SentimentAnalysisResponse
@@ -24,14 +23,14 @@ logger = setup_logging()
 class SentimentService:
     """Service for sentiment analysis using Hugging Face models"""
 
-    def __init__(self):
-        self.sentiment_pipeline = None
-        self.tokenizer = None
-        self.model = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(self) -> None:
+        self.sentiment_pipeline: Optional[Any] = None
+        self.tokenizer: Optional[Any] = None
+        self.model: Optional[Any] = None
+        self.device: str = "cuda" if torch.cuda.is_available() else "cpu"
         self._initialize_model()
 
-    def _initialize_model(self):
+    def _initialize_model(self) -> None:
         """Initialize the sentiment analysis model"""
         try:
             logger.info(f"Loading sentiment model: {settings.sentiment_model}")
@@ -116,7 +115,8 @@ class SentimentService:
         if len(text) > max_length:
             text = text[:max_length]
 
-        return self.sentiment_pipeline(text)
+        result = self.sentiment_pipeline(text)
+        return result if isinstance(result, list) else [result]
 
     async def batch_analyze(
         self, texts: List[str], _symbols: Optional[List[str]] = None
