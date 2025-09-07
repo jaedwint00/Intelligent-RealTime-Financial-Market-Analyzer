@@ -3,10 +3,16 @@ Sentiment analysis service using Hugging Face Transformers
 """
 
 import asyncio
-from typing import Dict, Optional
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from typing import Dict, Optional, List, Any
+
+# type: ignore
+from transformers import (
+    pipeline,
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+)
 import torch
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed  # type: ignore
 
 from ..models.schemas import SentimentAnalysisResponse
 from ..core.config import settings
@@ -47,7 +53,7 @@ class SentimentService:
 
             logger.info(f"Sentiment model loaded successfully on {self.device}")
 
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error loading sentiment model: {e}")
             # Fallback to a simpler model
             try:
@@ -57,12 +63,12 @@ class SentimentService:
                     return_all_scores=True,
                 )
                 logger.info("Loaded fallback sentiment model")
-            except Exception as fallback_error:
+            except (RuntimeError, OSError, ValueError) as fallback_error:
                 logger.error(f"Fallback model also failed: {fallback_error}")
                 raise
 
     async def analyze(
-        self, text: str, symbol: Optional[str] = None
+        self, text: str, _symbol: Optional[str] = None
     ) -> SentimentAnalysisResponse:
         """Analyze sentiment of given text"""
         try:
@@ -90,7 +96,7 @@ class SentimentService:
                 scores=scores,
             )
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             logger.error(f"Error analyzing sentiment: {e}")
             # Return neutral sentiment as fallback
             return SentimentAnalysisResponse(
@@ -100,7 +106,7 @@ class SentimentService:
                 scores={"positive": 0.33, "neutral": 0.34, "negative": 0.33},
             )
 
-    def _analyze_text(self, text: str) -> list:
+    def _analyze_text(self, text: str) -> List[Dict[str, Any]]:
         """Perform sentiment analysis on text"""
         if not self.sentiment_pipeline:
             raise ValueError("Sentiment pipeline not initialized")
@@ -112,7 +118,9 @@ class SentimentService:
 
         return self.sentiment_pipeline(text)
 
-    async def batch_analyze(self, texts: list, symbols: Optional[list] = None) -> list:
+    async def batch_analyze(
+        self, texts: List[str], _symbols: Optional[List[str]] = None
+    ) -> List[SentimentAnalysisResponse]:
         """Analyze sentiment for multiple texts in parallel"""
         try:
             # Use joblib for parallel processing
@@ -141,12 +149,12 @@ class SentimentService:
 
             return responses
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             logger.error(f"Error in batch sentiment analysis: {e}")
             return []
 
     async def analyze_market_news(
-        self, symbol: str, news_texts: list
+        self, symbol: str, news_texts: List[str]
     ) -> Dict[str, float]:
         """Analyze sentiment of market news for a specific symbol"""
         try:
@@ -162,7 +170,7 @@ class SentimentService:
             results = await self.batch_analyze(relevant_texts)
 
             # Aggregate scores
-            total_scores = {"positive": 0, "neutral": 0, "negative": 0}
+            total_scores = {"positive": 0.0, "neutral": 0.0, "negative": 0.0}
             count = len(results)
 
             for result in results:
@@ -177,7 +185,7 @@ class SentimentService:
 
             return avg_scores
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             logger.error(f"Error analyzing market news sentiment: {e}")
             return {"positive": 0.33, "neutral": 0.34, "negative": 0.33}
 

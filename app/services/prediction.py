@@ -3,8 +3,9 @@ Prediction service using PyTorch + Scikit-learn + Joblib
 """
 
 import json
+import os
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 import pandas as pd
 import torch
@@ -25,7 +26,7 @@ class LSTMPredictor(nn.Module):
     """LSTM model for price prediction"""
 
     def __init__(self, input_size=7, hidden_size=50, num_layers=2, output_size=1):
-        super(LSTMPredictor, self).__init__()
+        super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
@@ -34,6 +35,7 @@ class LSTMPredictor(nn.Module):
         self.dropout = nn.Dropout(0.2)
 
     def forward(self, x):
+        """Forward pass through the LSTM network"""
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
 
@@ -71,7 +73,7 @@ class PredictionService:
 
             logger.info(f"Models initialized on {self.device}")
 
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error initializing models: {e}")
 
     def _load_models(self):
@@ -99,15 +101,13 @@ class PredictionService:
 
             logger.info("Pre-trained models loaded successfully")
 
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError, OSError) as e:
             logger.warning(f"Could not load pre-trained models: {e}")
             logger.info("Using freshly initialized models")
 
     def _save_models(self):
         """Save trained models"""
         try:
-            import os
-
             os.makedirs(settings.model_path, exist_ok=True)
 
             # Save LSTM model
@@ -127,23 +127,30 @@ class PredictionService:
 
             logger.info("Models saved successfully")
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             logger.error(f"Error saving models: {e}")
 
     async def predict(
-        self, symbol: str, timeframe: str = "1h", features: Optional[Dict] = None
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        features: Optional[Dict[str, Any]] = None,
     ) -> PredictionResponse:
         """Generate price prediction for a symbol"""
         try:
             # Get historical data for prediction
-            from .data_ingestion import DataIngestionService
+            # Import here to avoid circular imports
+            from .data_ingestion import (
+                DataIngestionService,
+            )  # pylint: disable=import-outside-toplevel
 
             data_service = DataIngestionService()
             historical_data = await data_service.get_historical_data(symbol, 100)
 
             if len(historical_data) < 50:
                 raise ValueError(
-                    f"Insufficient data for prediction: {len(historical_data)} points"
+                    f"Insufficient data for prediction: "
+                    f"{len(historical_data)} points"
                 )
 
             # Prepare features
@@ -163,7 +170,7 @@ class PredictionService:
                 features_used=list(features_df.columns),
             )
 
-        except Exception as e:
+        except (ValueError, RuntimeError, KeyError) as e:
             logger.error(f"Error predicting price for {symbol}: {e}")
             raise
 
@@ -210,15 +217,15 @@ class PredictionService:
             ]
             return df[feature_columns].tail(50)  # Use last 50 points
 
-        except Exception as e:
+        except (ValueError, KeyError, AttributeError) as e:
             logger.error(f"Error preparing features: {e}")
             raise
 
     def _calculate_rsi(self, prices: pd.Series, window: int = 14) -> pd.Series:
         """Calculate Relative Strength Index"""
         delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        gain = delta.clip(lower=0).rolling(window=window).mean()
+        loss = (-delta).clip(lower=0).rolling(window=window).mean()
         rs = gain / loss
         return 100 - (100 / (1 + rs))
 
@@ -235,9 +242,7 @@ class PredictionService:
             features_scaled = self.feature_scaler.fit_transform(features_df.values)
 
             # Prepare sequence data
-            sequence_length = 20
-            if len(features_scaled) < sequence_length:
-                sequence_length = len(features_scaled)
+            sequence_length = min(20, len(features_scaled))
 
             X = features_scaled[-sequence_length:].reshape(1, sequence_length, -1)
             X_tensor = torch.FloatTensor(X).to(self.device)
@@ -255,13 +260,13 @@ class PredictionService:
 
             return predicted_price
 
-        except Exception as e:
+        except (RuntimeError, ValueError, IndexError) as e:
             logger.error(f"Error in LSTM prediction: {e}")
             # Fallback to simple prediction
             return features_df["price"].iloc[-1] * 1.001  # Small positive change
 
     async def _calculate_confidence(
-        self, features_df: pd.DataFrame, prediction: float
+        self, features_df: pd.DataFrame, _prediction: float
     ) -> float:
         """Calculate prediction confidence"""
         try:
@@ -284,18 +289,21 @@ class PredictionService:
             # Clamp between 0.1 and 0.95
             return min(max(confidence, 0.1), 0.95)
 
-        except Exception as e:
+        except (ValueError, IndexError, KeyError) as e:
             logger.error(f"Error calculating confidence: {e}")
             return 0.5  # Default confidence
 
-    async def get_signals(self, symbol: str, limit: int = 10) -> List[MarketSignal]:
+    async def get_signals(self, symbol: str, _limit: int = 10) -> List[MarketSignal]:
         """Generate market signals for a symbol"""
         try:
             # Get prediction
             prediction_response = await self.predict(symbol)
 
             # Get historical data for signal generation
-            from .data_ingestion import DataIngestionService
+            # Import here to avoid circular imports
+            from .data_ingestion import (
+                DataIngestionService,
+            )  # pylint: disable=import-outside-toplevel
 
             data_service = DataIngestionService()
             historical_data = await data_service.get_historical_data(symbol, 50)
@@ -339,7 +347,7 @@ class PredictionService:
 
             return [signal]
 
-        except Exception as e:
+        except (ValueError, RuntimeError, KeyError) as e:
             logger.error(f"Error generating signals for {symbol}: {e}")
             return []
 
@@ -353,10 +361,9 @@ class PredictionService:
         # Strong buy/sell signals
         if price_change > 0.02 and rsi < 70:
             return "buy"
-        elif price_change < -0.02 and rsi > 30:
+        if price_change < -0.02 and rsi > 30:
             return "sell"
-        else:
-            return "hold"
+        return "hold"
 
     def _calculate_signal_strength(
         self, features_df: pd.DataFrame, confidence: float
@@ -378,7 +385,7 @@ class PredictionService:
 
             return min(max(strength, 0.1), 1.0)
 
-        except Exception as e:
+        except (ValueError, IndexError, KeyError) as e:
             logger.error(f"Error calculating signal strength: {e}")
             return 0.5
 
@@ -399,7 +406,7 @@ class PredictionService:
 
                     await websocket.send_text(json.dumps(message))
 
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError) as e:
             logger.error(f"Error streaming signals: {e}")
 
     async def train_models(self, training_data: pd.DataFrame):
@@ -415,6 +422,6 @@ class PredictionService:
 
             logger.info("Model training completed")
 
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.error(f"Error training models: {e}")
             raise

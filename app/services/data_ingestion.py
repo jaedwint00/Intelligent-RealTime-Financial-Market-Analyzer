@@ -3,12 +3,13 @@ Real-time data ingestion service using AsyncIO + WebSockets + DuckDB
 """
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime
 from typing import List
 
 import duckdb
-import yfinance as yf
+import yfinance as yf  # type: ignore
 from fastapi import WebSocket
 
 from ..models.schemas import MarketDataPoint, AssetType
@@ -56,7 +57,7 @@ class DataIngestionService:
 
             logger.info("Database initialized successfully (in-memory)")
 
-        except Exception as e:
+        except (RuntimeError, OSError, duckdb.Error) as e:
             logger.error(f"Database initialization failed: {e}")
             raise
 
@@ -91,7 +92,7 @@ class DataIngestionService:
             # If no data in database, fetch from external API
             return await self._fetch_external_data(symbol, limit)
 
-        except Exception as e:
+        except (RuntimeError, ValueError, duckdb.Error) as e:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
             return []
 
@@ -119,7 +120,7 @@ class DataIngestionService:
 
             return data_points
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, AttributeError) as e:
             logger.error(f"Error fetching external data for {symbol}: {e}")
             return []
 
@@ -135,7 +136,6 @@ class DataIngestionService:
         """Store data point in database"""
         try:
             # Generate a simple ID based on timestamp and symbol hash
-            import hashlib
 
             id_hash = hashlib.md5(
                 f"{data_point.symbol}{data_point.timestamp}".encode()
@@ -160,7 +160,7 @@ class DataIngestionService:
                 ],
             )
 
-        except Exception as e:
+        except (RuntimeError, ValueError, duckdb.Error) as e:
             logger.error(f"Error storing data point: {e}")
 
     async def stream_data(self, websocket: WebSocket, symbol: str):
@@ -184,7 +184,7 @@ class DataIngestionService:
                 # Wait before next update
                 await asyncio.sleep(1)
 
-        except Exception as e:
+        except (RuntimeError, ConnectionError, ValueError) as e:
             logger.error(f"Error streaming data: {e}")
         finally:
             if websocket in self.active_connections:
@@ -202,7 +202,7 @@ class DataIngestionService:
                 # Wait before next batch
                 await asyncio.sleep(60)  # Ingest every minute
 
-            except Exception as e:
+            except (RuntimeError, ValueError, asyncio.CancelledError) as e:
                 logger.error(f"Background ingestion error: {e}")
                 await asyncio.sleep(30)  # Wait before retry
 
@@ -212,7 +212,7 @@ class DataIngestionService:
             data_points = await self._fetch_external_data(symbol, 1)
             logger.info(f"Ingested {len(data_points)} data points for {symbol}")
 
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.error(f"Error ingesting data for {symbol}: {e}")
 
     def close(self):

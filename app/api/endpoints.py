@@ -48,9 +48,9 @@ async def get_market_data(symbol: str, limit: int = 100):
     try:
         data = await data_service.get_historical_data(symbol, limit)
         return data
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         logger.error(f"Error fetching market data for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/predict", response_model=PredictionResponse)
@@ -61,9 +61,9 @@ async def predict_price(request: PredictionRequest):
             request.symbol, request.timeframe, request.features
         )
         return prediction
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         logger.error(f"Error predicting price for {request.symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/sentiment", response_model=SentimentAnalysisResponse)
@@ -72,9 +72,9 @@ async def analyze_sentiment(request: SentimentAnalysisRequest):
     try:
         result = await sentiment_service.analyze(request.text, request.symbol)
         return result
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         logger.error(f"Error analyzing sentiment: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/signals/{symbol}", response_model=List[MarketSignal])
@@ -83,9 +83,9 @@ async def get_market_signals(symbol: str, limit: int = 10):
     try:
         signals = await prediction_service.get_signals(symbol, limit)
         return signals
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         logger.error(f"Error fetching signals for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.websocket("/ws/market-data")
@@ -105,7 +105,7 @@ async def websocket_market_data(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("WebSocket connection closed")
-    except Exception as e:
+    except (RuntimeError, ConnectionError) as e:
         logger.error(f"WebSocket error: {e}")
         await websocket.close()
 
@@ -124,6 +124,6 @@ async def websocket_signals(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("Signal WebSocket connection closed")
-    except Exception as e:
+    except (RuntimeError, ConnectionError) as e:
         logger.error(f"Signal WebSocket error: {e}")
         await websocket.close()
